@@ -23,11 +23,11 @@ const en: LocaleType = {
     Rename: "Rename Chat",
     Typing: "Typing…",
     Input: (submitKey: string) => {
-      var inputHints = `Type something and press ${submitKey} to send`;
+      var inputHints = `${submitKey} to send`;
       if (submitKey === String(SubmitKey.Enter)) {
-        inputHints += ", press Shift + Enter to newline";
+        inputHints += ", Shift + Enter to wrap";
       }
-      return inputHints;
+      return inputHints + ", / to search prompts";
     },
     Send: "Send",
   },
@@ -41,11 +41,17 @@ const en: LocaleType = {
   Memory: {
     Title: "Memory Prompt",
     EmptyContent: "Nothing yet.",
-    Copy: "Copy All",
+    Send: "Send Memory",
+    Copy: "Copy Memory",
+    Reset: "Reset Session",
+    ResetConfirm:
+      "Resetting will clear the current conversation history and historical memory. Are you sure you want to reset?",
   },
   Home: {
     NewChat: "New Chat",
     DeleteChat: "Confirm to delete the selected conversation?",
+    DeleteToast: "Chat Deleted",
+    Revert: "Revert",
   },
   Settings: {
     Title: "Settings",
@@ -54,6 +60,12 @@ const en: LocaleType = {
       ClearAll: "Clear All Data",
       ResetAll: "Reset All Settings",
       Close: "Close",
+      ConfirmResetAll: {
+        Confirm: "Are you sure you want to reset all configurations?",
+      },
+      ConfirmClearAll: {
+        Confirm: "Are you sure you want to reset all chat?",
+      },
     },
     Lang: {
       Name: "Language", // ATTENTION: if you wanna add a new translation, please do not translate this value, leave it as `Language`
@@ -108,8 +120,8 @@ const en: LocaleType = {
     },
     Usage: {
       Title: "Account Balance",
-      SubTitle(used: any) {
-        return `Used this month $${used}`;
+      SubTitle(used: any, total: any) {
+        return `Used this month $${used}, subscription $${total}`;
       },
       IsChecking: "Checking...",
       Check: "Check Again",
