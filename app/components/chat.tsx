@@ -3,12 +3,14 @@ import { memo, useState, useRef, useEffect, useLayoutEffect } from "react";
 
 import SendWhiteIcon from "../icons/send-white.svg";
 import BrainIcon from "../icons/brain.svg";
+import RenameIcon from "../icons/rename.svg";
 import ExportIcon from "../icons/share.svg";
 import ReturnIcon from "../icons/return.svg";
 import CopyIcon from "../icons/copy.svg";
 import DownloadIcon from "../icons/download.svg";
 import LoadingIcon from "../icons/three-dots.svg";
 import BotIcon from "../icons/bot.svg";
+import BlackBotIcon from "../icons/black-bot.svg";
 import AddIcon from "../icons/add.svg";
 import DeleteIcon from "../icons/delete.svg";
 import MaxIcon from "../icons/max.svg";
@@ -18,6 +20,7 @@ import LightIcon from "../icons/light.svg";
 import DarkIcon from "../icons/dark.svg";
 import AutoIcon from "../icons/auto.svg";
 import BottomIcon from "../icons/bottom.svg";
+import StopIcon from "../icons/pause.svg";
 
 import {
   Message,
@@ -28,16 +31,16 @@ import {
   createMessage,
   useAccessStore,
   Theme,
+  ModelType,
 } from "../store";
 
 import {
   copyToClipboard,
   downloadAs,
   getEmojiUrl,
-  isMobileScreen,
   selectOrCopy,
   autoGrowTextArea,
-  getCSSVar,
+  useMobileScreen,
 } from "../utils";
 
 import dynamic from "next/dynamic";
@@ -63,13 +66,17 @@ const Emoji = dynamic(async () => (await import("emoji-picker-react")).Emoji, {
   loading: () => <LoadingIcon />,
 });
 
-export function Avatar(props: { role: Message["role"] }) {
+export function Avatar(props: { role: Message["role"]; model?: ModelType }) {
   const config = useChatStore((state) => state.config);
 
   if (props.role !== "user") {
     return (
       <div className="no-dark">
-        <BotIcon className={styles["user-avtar"]} />
+        {props.model?.startsWith("gpt-4") ? (
+          <BlackBotIcon className={styles["user-avtar"]} />
+        ) : (
+          <BotIcon className={styles["user-avtar"]} />
+        )}
       </div>
     );
   }
@@ -354,8 +361,8 @@ export function ChatActions(props: {
 }) {
   const chatStore = useChatStore();
 
+  // switch themes
   const theme = chatStore.config.theme;
-
   function nextTheme() {
     const themes = [Theme.Auto, Theme.Light, Theme.Dark];
     const themeIndex = themes.indexOf(theme);
@@ -364,8 +371,20 @@ export function ChatActions(props: {
     chatStore.updateConfig((config) => (config.theme = nextTheme));
   }
 
+  // stop all responses
+  const couldStop = ControllerPool.hasPending();
+  const stopAll = () => ControllerPool.stopAll();
+
   return (
     <div className={chatStyle["chat-input-actions"]}>
+      {couldStop && (
+        <div
+          className={`${chatStyle["chat-input-action"]} clickable`}
+          onClick={stopAll}
+        >
+          <StopIcon />
+        </div>
+      )}
       {!props.hitBottom && (
         <div
           className={`${chatStyle["chat-input-action"]} clickable`}
@@ -419,6 +438,7 @@ export function Chat(props: {
   const { submitKey, shouldSubmit } = useSubmitHandler();
   const { scrollRef, setAutoScroll, scrollToBottom } = useScrollToBottom();
   const [hitBottom, setHitBottom] = useState(false);
+  const isMobileScreen = useMobileScreen();
 
   const onChatBodyScroll = (e: HTMLElement) => {
     const isTouchBottom = e.scrollTop + e.clientHeight >= e.scrollHeight - 20;
@@ -442,16 +462,6 @@ export function Chat(props: {
     inputRef.current?.focus();
   };
 
-  const scrollInput = () => {
-    const dom = inputRef.current;
-    if (!dom) return;
-    const paddingBottomNum: number = parseInt(
-      window.getComputedStyle(dom).paddingBottom,
-      10,
-    );
-    dom.scrollTop = dom.scrollHeight - dom.offsetHeight + paddingBottomNum;
-  };
-
   // auto grow input
   const [inputRows, setInputRows] = useState(2);
   const measure = useDebouncedCallback(
@@ -459,7 +469,7 @@ export function Chat(props: {
       const rows = inputRef.current ? autoGrowTextArea(inputRef.current) : 1;
       const inputRows = Math.min(
         5,
-        Math.max(2 + Number(!isMobileScreen()), rows),
+        Math.max(2 + Number(!isMobileScreen), rows),
       );
       setInputRows(inputRows);
     },
@@ -476,7 +486,6 @@ export function Chat(props: {
   // only search prompts when user input is short
   const SEARCH_TEXT_LIMIT = 30;
   const onInput = (text: string) => {
-    scrollInput();
     setUserInput(text);
     const n = text.trim().length;
 
@@ -500,7 +509,7 @@ export function Chat(props: {
     setBeforeInput(userInput);
     setUserInput("");
     setPromptHints([]);
-    if (!isMobileScreen()) inputRef.current?.focus();
+    if (!isMobileScreen) inputRef.current?.focus();
     setAutoScroll(true);
   };
 
@@ -534,21 +543,44 @@ export function Chat(props: {
     }
   };
 
-  const onResend = (botIndex: number) => {
+  const findLastUesrIndex = (messageId: number) => {
     // find last user input message and resend
-    for (let i = botIndex; i >= 0; i -= 1) {
-      if (messages[i].role === "user") {
-        setIsLoading(true);
-        chatStore
-          .onUserInput(messages[i].content)
-          .then(() => setIsLoading(false));
-        chatStore.updateCurrentSession((session) =>
-          session.messages.splice(i, 2),
-        );
-        inputRef.current?.focus();
-        return;
+    let lastUserMessageIndex: number | null = null;
+    for (let i = 0; i < session.messages.length; i += 1) {
+      const message = session.messages[i];
+      if (message.id === messageId) {
+        break;
+      }
+      if (message.role === "user") {
+        lastUserMessageIndex = i;
       }
     }
+
+    return lastUserMessageIndex;
+  };
+
+  const deleteMessage = (userIndex: number) => {
+    chatStore.updateCurrentSession((session) =>
+      session.messages.splice(userIndex, 2),
+    );
+  };
+
+  const onDelete = (botMessageId: number) => {
+    const userIndex = findLastUesrIndex(botMessageId);
+    if (userIndex === null) return;
+    deleteMessage(userIndex);
+  };
+
+  const onResend = (botMessageId: number) => {
+    // find last user input message and resend
+    const userIndex = findLastUesrIndex(botMessageId);
+    if (userIndex === null) return;
+
+    setIsLoading(true);
+    const content = session.messages[userIndex].content;
+    deleteMessage(userIndex);
+    chatStore.onUserInput(content).then(() => setIsLoading(false));
+    inputRef.current?.focus();
   };
 
   const config = useChatStore((state) => state.config);
@@ -600,9 +632,16 @@ export function Chat(props: {
 
   const [showPromptModal, setShowPromptModal] = useState(false);
 
+  const renameSession = () => {
+    const newTopic = prompt(Locale.Chat.Rename, session.topic);
+    if (newTopic && newTopic !== session.topic) {
+      chatStore.updateCurrentSession((session) => (session.topic = newTopic!));
+    }
+  };
+
   // Auto focus
   useEffect(() => {
-    if (props.sideBarShowing && isMobileScreen()) return;
+    if (props.sideBarShowing && isMobileScreen) return;
     inputRef.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -613,14 +652,7 @@ export function Chat(props: {
         <div className={styles["window-header-title"]}>
           <div
             className={`${styles["window-header-main-title"]} ${styles["chat-body-title"]}`}
-            onClickCapture={() => {
-              const newTopic = prompt(Locale.Chat.Rename, session.topic);
-              if (newTopic && newTopic !== session.topic) {
-                chatStore.updateCurrentSession(
-                  (session) => (session.topic = newTopic!),
-                );
-              }
-            }}
+            onClickCapture={renameSession}
           >
             {session.topic}
           </div>
@@ -639,12 +671,9 @@ export function Chat(props: {
           </div>
           <div className={styles["window-action-button"]}>
             <IconButton
-              icon={<BrainIcon />}
+              icon={<RenameIcon />}
               bordered
-              title={Locale.Chat.Actions.CompressedHistory}
-              onClick={() => {
-                setShowPromptModal(true);
-              }}
+              onClick={renameSession}
             />
           </div>
           <div className={styles["window-action-button"]}>
@@ -660,7 +689,7 @@ export function Chat(props: {
               }}
             />
           </div>
-          {!isMobileScreen() && (
+          {!isMobileScreen && (
             <div className={styles["window-action-button"]}>
               <IconButton
                 icon={chatStore.config.tightBorder ? <MinIcon /> : <MaxIcon />}
@@ -686,6 +715,7 @@ export function Chat(props: {
         className={styles["chat-body"]}
         ref={scrollRef}
         onScroll={(e) => onChatBodyScroll(e.currentTarget)}
+        onMouseDown={() => inputRef.current?.blur()}
         onWheel={(e) => setAutoScroll(hitBottom && e.deltaY > 0)}
         onTouchStart={() => {
           inputRef.current?.blur();
@@ -694,6 +724,11 @@ export function Chat(props: {
       >
         {messages.map((message, i) => {
           const isUser = message.role === "user";
+          const showActions =
+            !isUser &&
+            i > 0 &&
+            !(message.preview || message.content.length === 0);
+          const showTyping = message.preview || message.streaming;
 
           return (
             <div
@@ -704,41 +739,48 @@ export function Chat(props: {
             >
               <div className={styles["chat-message-container"]}>
                 <div className={styles["chat-message-avatar"]}>
-                  <Avatar role={message.role} />
+                  <Avatar role={message.role} model={message.model} />
                 </div>
-                {(message.preview || message.streaming) && (
+                {showTyping && (
                   <div className={styles["chat-message-status"]}>
                     {Locale.Chat.Typing}
                   </div>
                 )}
                 <div className={styles["chat-message-item"]}>
-                  {!isUser &&
-                    !(message.preview || message.content.length === 0) && (
-                      <div className={styles["chat-message-top-actions"]}>
-                        {message.streaming ? (
+                  {showActions && (
+                    <div className={styles["chat-message-top-actions"]}>
+                      {message.streaming ? (
+                        <div
+                          className={styles["chat-message-top-action"]}
+                          onClick={() => onUserStop(message.id ?? i)}
+                        >
+                          {Locale.Chat.Actions.Stop}
+                        </div>
+                      ) : (
+                        <>
                           <div
                             className={styles["chat-message-top-action"]}
-                            onClick={() => onUserStop(message.id ?? i)}
+                            onClick={() => onDelete(message.id ?? i)}
                           >
-                            {Locale.Chat.Actions.Stop}
+                            {Locale.Chat.Actions.Delete}
                           </div>
-                        ) : (
                           <div
                             className={styles["chat-message-top-action"]}
-                            onClick={() => onResend(i)}
+                            onClick={() => onResend(message.id ?? i)}
                           >
                             {Locale.Chat.Actions.Retry}
                           </div>
-                        )}
+                        </>
+                      )}
 
-                        <div
-                          className={styles["chat-message-top-action"]}
-                          onClick={() => copyToClipboard(message.content)}
-                        >
-                          {Locale.Chat.Actions.Copy}
-                        </div>
+                      <div
+                        className={styles["chat-message-top-action"]}
+                        onClick={() => copyToClipboard(message.content)}
+                      >
+                        {Locale.Chat.Actions.Copy}
                       </div>
-                    )}
+                    </div>
+                  )}
                   <Markdown
                     content={message.content}
                     loading={
