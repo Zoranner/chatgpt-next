@@ -53,9 +53,10 @@ export const useUpdateStore = create<UpdateStore>()(
         }));
 
         try {
+          // const data = await (await fetch(FETCH_TAG_URL)).json();
+          // const remoteId = data[0].name as string;
           const data = await (await fetch(FETCH_COMMIT_URL)).json();
-          const remoteCommitTime = data[0].commit.committer.date;
-          const remoteId = new Date(remoteCommitTime).getTime().toString();
+          const remoteId = (data[0].sha as string).substring(0, 7);
           set(() => ({
             remoteVersion: remoteId,
           }));
