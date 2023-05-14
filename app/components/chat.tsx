@@ -26,12 +26,10 @@ import {
   SubmitKey,
   useChatStore,
   BOT_HELLO,
-  ROLES,
   createMessage,
   useAccessStore,
   Theme,
   useAppConfig,
-  ModelConfig,
   DEFAULT_TOPIC,
 } from "../store";
 
@@ -55,14 +53,11 @@ import chatStyle from "./chat.module.scss";
 
 import { ListItem, Modal, showModal } from "./ui-lib";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Path } from "../constant";
+import { LAST_INPUT_KEY, Path } from "../constant";
 import { Avatar } from "./emoji";
 import { MaskAvatar, MaskConfig } from "./mask";
-import {
-  DEFAULT_MASK_AVATAR,
-  DEFAULT_MASK_ID,
-  useMaskStore,
-} from "../store/mask";
+import { useMaskStore } from "../store/mask";
+import { useCommand } from "../command";
 
 const Markdown = dynamic(async () => (await import("./markdown")).Markdown, {
   loading: () => <LoadingIcon />,
@@ -235,7 +230,9 @@ export function PromptHints(props: {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (noPrompts) return;
-
+      if (e.metaKey || e.altKey || e.ctrlKey) {
+        return;
+      }
       // arrow up / down to select prompt
       const changeIndex = (delta: number) => {
         e.stopPropagation();
@@ -409,7 +406,6 @@ export function Chat() {
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [userInput, setUserInput] = useState("");
-  const [beforeInput, setBeforeInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const { submitKey, shouldSubmit } = useSubmitHandler();
   const { scrollRef, setAutoScroll, scrollToBottom } = useScrollToBottom();
@@ -478,12 +474,11 @@ export function Chat() {
     }
   };
 
-  // submit user input
-  const onUserSubmit = () => {
+  const doSubmit = (userInput: string) => {
     if (userInput.trim() === "") return;
     setIsLoading(true);
     chatStore.onUserInput(userInput).then(() => setIsLoading(false));
-    setBeforeInput(userInput);
+    localStorage.setItem(LAST_INPUT_KEY, userInput);
     setUserInput("");
     setPromptHints([]);
     if (!isMobileScreen) inputRef.current?.focus();
@@ -497,23 +492,22 @@ export function Chat() {
 
   // check if should send message
   const onInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // if ArrowUp and no userInput
-    if (e.key === "ArrowUp" && userInput.length <= 0) {
-      setUserInput(beforeInput);
+    // if ArrowUp and no userInput, fill with last input
+    if (
+      e.key === "ArrowUp" &&
+      userInput.length <= 0 &&
+      !(e.metaKey || e.altKey || e.ctrlKey)
+    ) {
+      setUserInput(localStorage.getItem(LAST_INPUT_KEY) ?? "");
       e.preventDefault();
       return;
     }
     if (shouldSubmit(e)) {
-      onUserSubmit();
+      doSubmit(userInput);
       e.preventDefault();
     }
   };
   const onRightClick = (e: any, message: Message) => {
-    // auto fill user input
-    if (message.role === "user") {
-      setUserInput(message.content);
-    }
-
     // copy to clipboard
     if (selectOrCopy(e.currentTarget, message.content)) {
       e.preventDefault();
@@ -617,6 +611,13 @@ export function Chat() {
   const location = useLocation();
   const isChat = location.pathname === Path.Chat;
   const autoFocus = !isMobileScreen || isChat; // only focus in chat page
+
+  useCommand({
+    fill: setUserInput,
+    submit: (text) => {
+      doSubmit(text);
+    },
+  });
 
   return (
     <div className={styles.chat} key={session.id}>
@@ -794,7 +795,14 @@ export function Chat() {
           scrollToBottom={scrollToBottom}
           hitBottom={hitBottom}
           showPromptHints={() => {
+            // Click again to close
+            if (promptHints.length > 0) {
+              setPromptHints([]);
+              return;
+            }
+
             inputRef.current?.focus();
+            setUserInput("/");
             onSearch("");
           }}
         />
@@ -816,7 +824,7 @@ export function Chat() {
             text={Locale.Chat.Send}
             className={styles["chat-input-send"]}
             type="primary"
-            onClick={onUserSubmit}
+            onClick={() => doSubmit(userInput)}
           />
         </div>
       </div>
