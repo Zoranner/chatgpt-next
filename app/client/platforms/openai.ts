@@ -3,6 +3,11 @@ import { useAccessStore, useAppConfig, useChatStore } from "@/app/store";
 
 import { ChatOptions, getHeaders, LLMApi, LLMUsage } from "../api";
 import Locale from "../../locales";
+import {
+  EventStreamContentType,
+  fetchEventSource,
+} from "@microsoft/fetch-event-source";
+import { prettyObject } from "@/app/utils/format";
 
 export class ChatGPTApi implements LLMApi {
   public ChatPath = "v1/chat/completions";
@@ -10,8 +15,10 @@ export class ChatGPTApi implements LLMApi {
   public SubsPath = "dashboard/billing/subscription";
 
   path(path: string): string {
-    const openaiUrl = useAccessStore.getState().openaiUrl;
-    if (openaiUrl.endsWith("/")) openaiUrl.slice(0, openaiUrl.length - 1);
+    let openaiUrl = useAccessStore.getState().openaiUrl;
+    if (openaiUrl.endsWith("/")) {
+      openaiUrl = openaiUrl.slice(0, openaiUrl.length - 1);
+    }
     return [openaiUrl, path].join("/");
   }
 
@@ -57,7 +64,7 @@ export class ChatGPTApi implements LLMApi {
       };
 
       // make a fetch request
-      const reqestTimeoutId = setTimeout(
+      const requestTimeoutId = setTimeout(
         () => controller.abort(),
         REQUEST_TIMEOUT_MS,
       );
@@ -69,40 +76,39 @@ export class ChatGPTApi implements LLMApi {
           options.onFinish(responseText);
         };
 
-        const res = await fetch(chatPath, chatPayload);
-        clearTimeout(reqestTimeoutId);
+        controller.signal.onabort = finish;
 
-        if (res.status === 401) {
-          responseText += "\n\n" + Locale.Error.Unauthorized;
-          return finish();
-        }
-
-        if (
-          !res.ok ||
-          !res.headers.get("Content-Type")?.includes("stream") ||
-          !res.body
-        ) {
-          return options.onError?.(new Error());
-        }
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder("utf-8");
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) {
-            return finish();
-          }
-
-          const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split("data: ");
-
-          for (const line of lines) {
-            const text = line.trim();
-            if (line.startsWith("[DONE]")) {
+        fetchEventSource(chatPath, {
+          ...chatPayload,
+          async onopen(res) {
+            clearTimeout(requestTimeoutId);
+            if (
+              res.ok &&
+              res.headers.get("content-type") !== EventStreamContentType
+            ) {
+              responseText += await res.clone().json();
               return finish();
             }
-            if (text.length === 0) continue;
+            if (res.status === 401) {
+              let extraInfo = { error: undefined };
+              try {
+                extraInfo = await res.clone().json();
+              } catch {}
+
+              responseText += "\n\n" + Locale.Error.Unauthorized;
+
+              if (extraInfo.error) {
+                responseText += "\n\n" + prettyObject(extraInfo);
+              }
+
+              return finish();
+            }
+          },
+          onmessage(msg) {
+            if (msg.data === "[DONE]") {
+              return finish();
+            }
+            const text = msg.data;
             try {
               const json = JSON.parse(text);
               const delta = json.choices[0].delta.content;
@@ -111,13 +117,19 @@ export class ChatGPTApi implements LLMApi {
                 options.onUpdate?.(responseText, delta);
               }
             } catch (e) {
-              console.error("[Request] parse error", text, chunk);
+              console.error("[Request] parse error", text, msg);
             }
-          }
-        }
+          },
+          onclose() {
+            finish();
+          },
+          onerror(e) {
+            options.onError?.(e);
+          },
+        });
       } else {
         const res = await fetch(chatPath, chatPayload);
-        clearTimeout(reqestTimeoutId);
+        clearTimeout(requestTimeoutId);
 
         const resJson = await res.json();
         const message = this.extractMessage(resJson);
