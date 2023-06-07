@@ -85,7 +85,7 @@ export const useUpdateStore = create<UpdateStore>()(
             }));
           }
         } catch (e) {
-          showToast((e as Error).message);
+          console.error((e as Error).message);
         }
       },
     }),
