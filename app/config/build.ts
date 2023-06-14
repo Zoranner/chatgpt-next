@@ -9,7 +9,7 @@ export const getBuildConfig = () => {
     try {
       const childProcess = require("child_process");
       return childProcess
-        .execSync('git log -1 --format="%at000" --date=unix')
+        .execSync("git rev-parse --short HEAD")
         .toString()
         .trim();
     } catch (e) {
