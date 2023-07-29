@@ -20,7 +20,7 @@
     "@hello-pangea/dnd": "^16.3.0",
     "@svgr/webpack": "^8.0.1",
     "@vercel/analytics": "^1.0.1",
-    "emoji-picker-react": "^4.4.10",
+    "emoji-picker-react": "^4.4.9",
     "fuse.js": "^6.6.2",
     "html-to-image": "^1.11.11",
     "mermaid": "^10.2.3",
@@ -44,7 +44,7 @@
   "devDependencies": {
     "@tauri-apps/cli": "^1.4.0",
     "@types/node": "^20.3.3",
-    "@types/react": "^18.2.15",
+    "@types/react": "^18.2.17",
     "@types/react-dom": "^18.0.11",
     "@types/react-katex": "^3.0.0",
     "@types/spark-md5": "^3.0.2",
